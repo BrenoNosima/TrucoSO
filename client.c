@@ -1,145 +1,128 @@
-// client.c
-// Truco Mineiro - Cliente (Jogador 2)
-// Correcoes: terminação de buffers apos recv, uso do mutex para ler memoria compartilhada,
-// mensagens sem acentos para evitar problemas de encoding.
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+/* =======================================================
+ * cliente_refatorado.c - Truco Mineiro (Cliente)
+ * Lógica de exibição e comunicação aprimorada.
+ * Compilar:
+ * gcc cliente_refatorado.c -o cliente.exe -lws2_32 -lpthread
+ * ======================================================= */
 #include <winsock2.h>
 #include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
 
-#pragma comment(lib,"ws2_32.lib")
+#pragma comment(lib, "ws2_32.lib")
 
-#define SERVER_IP "127.0.0.1"
-#define PORT 8080
-#define MEM_NAME "Local\\TrucoMem"
-#define MUTEX_NAME "Local\\TrucoMutex"
+#define PORTA 12345
+#define TAM_IP 30
+#define HAND_SIZE 3
+#define DECK_SIZE 40
 
 typedef struct {
-    int vez;
-    int pontos_server;
-    int pontos_client;
-    char ultima_jogada[64];
-    char status[128];
-} SharedMem;
+    int server_pts;
+    int client_pts;
+    int turn;
+    int hand_num;
+    int round_num;
+    int game_over;
+    int client_hand[HAND_SIZE];
+    // NOVO: Campos para ver as cartas na mesa
+    int server_card_on_table;
+    int client_card_on_table;
+} GameState;
+
+const char *valor_nome[10] = {"A","2","3","4","5","6","7","J","Q","K"};
+const char *naipe_nome[4] = {"Paus","Copas","Espadas","Ouros"};
+void print_card(int card_index) {
+    if (card_index < 0 || card_index >= DECK_SIZE) { printf("(vazia)"); return; }
+    int value = card_index / 4; int suit = card_index % 4;
+    printf("%s de %s", valor_nome[value], naipe_nome[suit]);
+}
+
+SOCKET sock;
+GameState gameState;
+int jogoAtivo = 1;
+
+void display_game() {
+    system("cls");
+    printf("=== MÃO %d | Rodada %d ===\n", gameState.hand_num, gameState.round_num);
+    printf("PLACAR: Servidor %d x %d Você\n", gameState.server_pts, gameState.client_pts);
+    printf("----------------------------------\n");
+    printf("MESA:\n");
+    printf("  Servidor: ");
+    if(gameState.server_card_on_table != -1) print_card(gameState.server_card_on_table);
+    else printf("---");
+    printf("\n  Você:     ");
+    if(gameState.client_card_on_table != -1) print_card(gameState.client_card_on_table);
+    else printf("---");
+    printf("\n----------------------------------\n");
+    
+    printf("SUA MÃO:\n");
+    for(int i=0; i<HAND_SIZE; i++){
+        if(gameState.client_hand[i] != -1){
+            printf("  %d) ", i+1); print_card(gameState.client_hand[i]); printf("\n");
+        }
+    }
+    printf("----------------------------------\n");
+
+    if (gameState.turn == 2) printf(">>> SUA VEZ DE JOGAR! <<<\n");
+    else printf(">>> Aguardando jogada do servidor... <<<\n");
+}
+
+void* receber_thread(void* arg) {
+    while (jogoAtivo) {
+        int bytes = recv(sock, (char*)&gameState, sizeof(GameState), 0);
+        if (bytes <= 0) {
+            printf("\n[conexao] Servidor desconectou.\n"); jogoAtivo = 0; break;
+        }
+        if (gameState.game_over) jogoAtivo = 0;
+        display_game();
+    }
+    return NULL;
+}
 
 int main() {
+    SetConsoleOutputCP(65001);
     WSADATA wsa;
-    SOCKET sock = INVALID_SOCKET;
-    struct sockaddr_in server_addr;
-    char buffer[1024];
+    struct sockaddr_in servidor;
+    char ip_servidor[TAM_IP];
 
-    // --- inicializa Winsock
-    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
-        printf("WSAStartup falhou\n");
-        return 1;
-    }
+    printf("=== Cliente Truco Mineiro ===\nDigite o IP do servidor (ex: 127.0.0.1): ");
+    scanf("%s", ip_servidor);
 
-    // --- mapear memoria compartilhada (mesmo nome do servidor) ---
-    HANDLE hMap = NULL;
-    // tentativa de abrir a memoria mapeada (o servidor deve rodar primeiro)
-    int attempts = 0;
-    while (attempts < 5) {
-        hMap = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, MEM_NAME);
-        if (hMap != NULL) break;
-        attempts++;
-        Sleep(200); // esperar um pouco
-    }
-    if (hMap == NULL) {
-        printf("Nao encontrou memoria compartilhada. Inicie o servidor primeiro.\n");
-        WSACleanup();
-        return 1;
-    }
-
-    SharedMem *mem = (SharedMem*) MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMem));
-    if (mem == NULL) {
-        printf("Erro MapViewOfFile (cliente): %lu\n", GetLastError());
-        CloseHandle(hMap);
-        WSACleanup();
-        return 1;
-    }
-
-    HANDLE hMutex = OpenMutexA(SYNCHRONIZE, FALSE, MUTEX_NAME);
-    if (hMutex == NULL) {
-        printf("Erro OpenMutex: %lu\n", GetLastError());
-        UnmapViewOfFile(mem);
-        CloseHandle(hMap);
-        WSACleanup();
-        return 1;
-    }
-
-    // --- conectar ao servidor ---
+    WSAStartup(MAKEWORD(2, 2), &wsa);
     sock = socket(AF_INET, SOCK_STREAM, 0);
-    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP);
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
+    servidor.sin_family = AF_INET;
+    servidor.sin_port = htons(PORTA);
+    servidor.sin_addr.s_addr = inet_addr(ip_servidor);
 
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        printf("Erro ao conectar.\n");
-        UnmapViewOfFile(mem);
-        CloseHandle(hMap);
-        CloseHandle(hMutex);
-        WSACleanup();
-        return 1;
+    if (connect(sock, (struct sockaddr*)&servidor, sizeof(servidor)) == SOCKET_ERROR) {
+        printf("Erro ao conectar.\n"); closesocket(sock); return 1;
+    }
+    
+    pthread_t thread_id;
+    pthread_create(&thread_id, NULL, receber_thread, NULL);
+
+    while(jogoAtivo) {
+        if(gameState.turn == 2) {
+            int indice_escolhido = -1;
+            do {
+                printf("Escolha uma carta (1-3): ");
+                scanf("%d", &indice_escolhido);
+                indice_escolhido--;
+            } while (indice_escolhido < 0 || indice_escolhido >= 3 || gameState.client_hand[indice_escolhido] == -1);
+            
+            send(sock, (char*)&indice_escolhido, sizeof(int), 0);
+            gameState.turn = 1; 
+            display_game();
+        }
+        Sleep(100);
     }
 
-    printf("Conectado ao servidor!\n");
+    pthread_join(thread_id, NULL);
+    printf("\n--- FIM DE JOGO ---\n");
+    printf("Placar final: Servidor %d x %d Você\n", gameState.server_pts, gameState.client_pts);
+    printf("\n[encerrado] Pressione Enter para sair.\n");
+    getchar(); getchar();
 
-    // loop principal: recebe mensagens do servidor e responde quando solicitado
-    while (1) {
-        memset(buffer, 0, sizeof(buffer));
-        int bytes = recv(sock, buffer, (int)sizeof(buffer)-1, 0);
-        if (bytes <= 0) break;
-
-        // garantir terminação correta
-        buffer[bytes] = '\0';
-        // remover CRLF no fim (se houver)
-        buffer[strcspn(buffer, "\r\n")] = 0;
-
-        // imprime mensagem do servidor
-        printf("%s\n", buffer);
-
-        // se a mensagem contem "Fim de jogo", sai
-        if (strstr(buffer, "Fim de jogo")) break;
-
-        // se o servidor solicitou escolha da carta, jogue
-        if (strstr(buffer, "Escolha sua carta")) {
-            printf("> ");
-            char entrada[64];
-            if (!fgets(entrada, sizeof(entrada), stdin)) break;
-            // envia escolha pro servidor
-            char envio[64];
-            // limpa newline
-            entrada[strcspn(entrada, "\r\n")] = 0;
-            sprintf(envio, "%s", entrada);
-            send(sock, envio, (int)strlen(envio), 0);
-
-            // atualizar memoria compartilhada indicando que cliente escolheu
-            WaitForSingleObject(hMutex, INFINITE);
-            mem->vez = 1; // volta a vez ao servidor apos enviar
-            snprintf(mem->ultima_jogada, sizeof(mem->ultima_jogada), "Cliente escolheu carta indice %s", envio);
-            snprintf(mem->status, sizeof(mem->status), "Cliente jogou (escolha enviada)");
-            ReleaseMutex(hMutex);
-        }
-
-        // opcional: se recebeu placar ou status, podemos mostrar o estado compartilhado
-        if (strstr(buffer, "Placar") || strstr(buffer, "Partida vencida") || strstr(buffer, "Rodada")) {
-            // pegar snapshot da memoria compartilhada
-            WaitForSingleObject(hMutex, INFINITE);
-            printf("[MEM PARTILHADA] vez=%d | pontos_server=%d | pontos_client=%d\n",
-                   mem->vez, mem->pontos_server, mem->pontos_client);
-            printf("[MEM PARTILHADA] ultima_jogada=%s\n", mem->ultima_jogada);
-            printf("[MEM PARTILHADA] status=%s\n", mem->status);
-            ReleaseMutex(hMutex);
-        }
-    }
-
-    // cleanup
-    closesocket(sock);
-    UnmapViewOfFile(mem);
-    CloseHandle(hMap);
-    CloseHandle(hMutex);
-    WSACleanup();
-    return 0;
+    closesocket(sock); WSACleanup(); return 0;
 }

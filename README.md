@@ -1,190 +1,79 @@
-# 🎴 Truco Mineiro — Implementação em C com Sockets (Cliente/Servidor)
+# Truco Mineiro em C (Cliente/Servidor) 🃏
 
-## 🧠 Descrição Geral
+Este projeto implementa o jogo Truco Mineiro em linguagem C, utilizando uma arquitetura cliente/servidor para permitir partidas entre dois jogadores via rede. A comunicação é realizada através de Sockets TCP, com a biblioteca `Winsock2` para o ambiente Windows.
 
-Este projeto implementa o **jogo Truco Mineiro** em linguagem **C**, com comunicação entre dois jogadores via **sockets TCP/IP**, utilizando a biblioteca **Winsock2.h**.
+O servidor gerencia toda a lógica do jogo, como distribuição de cartas, contagem de pontos, controle de turnos e validação das regras, garantindo que seja a única fonte da verdade. O cliente é responsável por se conectar ao servidor, exibir o estado atual do jogo e enviar as ações do jogador.
 
-A aplicação é dividida em **duas partes**:
+## ✨ Funcionalidades Atuais
 
-* 🖥️ **Servidor (Jogador 1)**
-* 💻 **Cliente (Jogador 2)**
+  - **Arquitetura Cliente/Servidor:** Jogo totalmente funcional em rede local (localhost).
+  - **Comunicação em Tempo Real:** Uso de Sockets TCP para uma comunicação estável e sequencial.
+  - **Lógica do Truco Mineiro:** Implementação do ranking de cartas, incluindo as manilhas (Zap, Copeta, Espadilha e Pica-fumo).
+  - **Sistema de Jogo Completo:** Controle de mãos, rodadas (vazas), contagem de pontos e determinação do vencedor da partida.
+  - **Interface de Linha de Comando (CLI):** Interação simples e direta através do terminal para ambos os jogadores.
+  - **Multi-threading no Cliente:** A recepção de dados do servidor ocorre em uma thread separada para não bloquear a interface do usuário.
 
-O servidor cria uma conexão local (porta 8080) e gerencia a partida, enquanto o cliente se conecta e interage enviando suas jogadas.
-O jogo simula um **Truco simplificado**, com cálculo de força das cartas, três rodadas por partida e contagem de pontos até um dos jogadores alcançar **12 pontos**.
+## 🛠️ Tecnologias Utilizadas
 
----
+  - **Linguagem:** C
+  - **Comunicação em Rede:** Sockets TCP (Biblioteca `Winsock2` para Windows)
+  - **Compilador:** MinGW-w64 (GCC para Windows)
+  - **Threading:** `pthreads` (utilizada no cliente)
 
-## ⚙️ Tecnologias Utilizadas
+## ⚙️ Pré-requisitos
 
-* Linguagem **C**
-* **Winsock2.h** — para comunicação entre processos via rede (sockets TCP)
-* **stdlib.h**, **string.h**, **time.h** — para manipulação de dados, strings e geração aleatória
-* Testado em **Windows 10/11** com **MinGW**
+Para compilar e executar este projeto, é necessário ter o seguinte ambiente configurado:
 
----
+  - Windows 10 ou superior.
+  - **MSYS2 com o toolchain MinGW-w64:** Essencial para ter acesso ao compilador `gcc` e às bibliotecas necessárias no Windows. Você pode baixá-lo [aqui](https://www.msys2.org/).
 
-## 🧩 Estrutura do Projeto
+## 🚀 Como Compilar e Executar
 
-```
-TrucoMineiro/
-├── server.c    # Código do Servidor (Jogador 1)
-├── client.c    # Código do Cliente (Jogador 2)
-├── README.md   # Documentação do projeto
-```
+Siga os passos abaixo para iniciar uma partida. É necessário ter **dois terminais** MinGW-w64 abertos.
 
----
-
-## 🕹️ Como Funciona o Jogo
-
-1. O servidor embaralha o baralho (40 cartas do truco).
-2. Cada jogador recebe **3 cartas**.
-3. A partida ocorre em **melhor de 3 rodadas**:
-
-   * Cada jogador escolhe uma carta (1, 2 ou 3).
-   * As cartas são comparadas por **força**, e o vencedor leva a rodada.
-4. O jogador que vencer **duas rodadas** ganha a partida e soma 1 ponto.
-5. O jogo continua até alguém alcançar **12 pontos**.
-
----
-
-## 💬 Protocolo de Comunicação
-
-A comunicação ocorre por **mensagens trocadas entre servidor e cliente** através de sockets TCP.
-
-| Direção            | Exemplo de Mensagem                     | Descrição                                                |                     |                         |
-| ------------------ | --------------------------------------- | -------------------------------------------------------- | ------------------- | ----------------------- |
-| Servidor → Cliente | `"Suas cartas: 5 de Copas               | 2 de Espadas                                             | A de Ouros"`        | Envia cartas do jogador |
-| Servidor → Cliente | `"Rodada 1 - Escolha sua carta (1-3):"` | Solicita jogada                                          |                     |                         |
-| Cliente → Servidor | `"2"`                                   | Jogador escolhe carta 2                                  |                     |                         |
-| Servidor → Cliente | `"Rodada 1: Você jogou 2 de Espadas     | Adversário jogou 3 de Paus -> Cliente ganhou a rodada!"` | Resultado da rodada |                         |
-| Servidor → Cliente | `"Placar: Servidor 3 x 1 Cliente"`      | Atualiza placar                                          |                     |                         |
-| Servidor → Cliente | `"Fim de jogo! Servidor venceu!"`       | Finaliza partida                                         |                     |                         |
-
----
-
-## 🧮 Cálculo da Força das Cartas
-
-A função `calcularForca()` define a hierarquia das cartas do **Truco Mineiro**, onde as **manilhas** possuem maior valor:
-
-| Carta | Naipe    | Força | Descrição         |
-| ----- | -------- | ----- | ----------------- |
-| 4     | Paus     | 14    | Zap (maior carta) |
-| 7     | Copas    | 13    | Segunda manilha   |
-| A     | Espadas  | 12    | Terceira manilha  |
-| 7     | Ouros    | 11    | Quarta manilha    |
-| 3     | Qualquer | 10    | Alta              |
-| 2     | Qualquer | 9     | Alta              |
-| A     | Outros   | 8     | Média             |
-| K     | Qualquer | 7     | Média             |
-| J     | Qualquer | 6     | Média             |
-| Q     | Qualquer | 5     | Média             |
-| 7     | Outros   | 4     | Baixa             |
-| 6     | Qualquer | 3     | Baixa             |
-| 5     | Qualquer | 2     | Baixa             |
-| 4     | Outros   | 1     | Menor             |
-
----
-
-## 🧱 Lógica de Execução
-
-### Servidor (`server.c`)
-
-* Cria o socket (`socket()`)
-* Define o endereço e porta (`bind()`)
-* Aguarda conexão do cliente (`listen()` / `accept()`)
-* Embaralha e distribui cartas
-* Controla as rodadas e pontuação
-* Envia mensagens e recebe respostas do cliente
-* Exibe logs da partida no terminal
-
-### Cliente (`client.c`)
-
-* Conecta ao servidor via IP (`127.0.0.1`)
-* Recebe as cartas e mensagens do servidor
-* Envia respostas (escolha de carta)
-* Exibe todas as mensagens no terminal
-
----
-
-## ⚙️ Compilação
-
-### No Windows (MinGW)
+### 1\. Clone o Repositório
 
 ```bash
-gcc server.c -o servidor.exe -lws2_32
-gcc client.c -o cliente.exe -lws2_32
+git clone https://github.com/BrenoNosima/TrucoSO.git
+cd TrucoSO
 ```
 
----
+### 2\. Terminal 1 - Iniciar o Servidor
 
-## ▶️ Execução
-
-### 1️⃣ Inicie o Servidor
+Neste terminal, você irá compilar e executar o servidor. Ele ficará aguardando a conexão do cliente.
 
 ```bash
-servidor.exe
+# Compilar o servidor
+gcc servidor.c -o truco.exe -lws2_32
+
+# Executar o servidor
+./truco.exe
 ```
 
-### 2️⃣ Em Outro Terminal, Inicie o Cliente
+### 3\. Terminal 2 - Iniciar o Cliente
+
+Neste segundo terminal, você irá compilar e executar o cliente para se conectar ao servidor.
 
 ```bash
-cliente.exe
+# Compilar o cliente (é necessário linkar a biblioteca pthread)
+gcc cliente.c -o cliente.exe -lws2_32 -lpthread
+
+# Executar o cliente
+./cliente.exe
 ```
 
-Os dois terminais devem exibir as mensagens trocadas, por exemplo:
+Após executar, o cliente solicitará o endereço IP do servidor. Digite `127.0.0.1` e pressione Enter para se conectar localmente.
 
-```
-[Servidor]
-Suas cartas: 5 de Ouros | Q de Espadas | 7 de Copas
-Jogador conectado!
-Rodada 1 - Escolha sua carta (1-3): 2
-Rodada 1: Você jogou Q de Espadas | Adversário jogou 7 de Copas -> Servidor ganhou a rodada!
-Placar: Servidor 1 x 0 Cliente
-```
+O jogo começará\!
 
-```
-[Cliente]
-Suas cartas: 4 de Copas | A de Ouros | 2 de Espadas
-Rodada 1 - Escolha sua carta (1-3):
-> 1
-Rodada 1: Você jogou 4 de Copas | Adversário jogou 7 de Copas -> Cliente perdeu a rodada!
-Placar: Servidor 1 x 0 Cliente
-```
+## 📂 Estrutura do Projeto
 
----
+  - `servidor.c`: Contém toda a lógica principal do jogo, gerenciamento de estado, regras de negócio e comunicação com o cliente. Atua como o anfitrião da partida.
+  - `cliente.c`: Responsável por se conectar ao servidor, exibir a interface para o jogador (mão, placar, mesa) e capturar o input do usuário para enviar ao servidor.
 
-## 🔐 Recursos e Técnicas Utilizadas
+## 👥 Autores
 
-| Recurso                             | Aplicação                               |
-| ----------------------------------- | --------------------------------------- |
-| **Sockets TCP (Winsock2)**          | Comunicação entre servidor e cliente    |
-| **Mensagens em strings**            | Troca de dados estruturados via texto   |
-| **Função `embaralhar()`**           | Geração aleatória da ordem das cartas   |
-| **Função `calcularForca()`**        | Lógica de força do Truco Mineiro        |
-| **Controle de pontuação e rodadas** | Vence quem atingir 12 pontos            |
-| **Buffers de comunicação**          | Uso de `send()` e `recv()` com `char[]` |
+Este projeto está sendo desenvolvido por:
 
-
-## 🧑‍💻 Autores
-Breno  Nosima
-Felipe Galeti Gôngora
-
-## 🧾 Avaliação
-
-| Critério               | Descrição                                 
-| ---------------------- | ----------------------------------------- 
-| Originalidade          | Implementação fiel do Truco Mineiro             |
-| Troca de mensagens     | Comunicação clara e eficiente via sockets 
-| Técnicas implementadas | Embaralhamento, força das cartas, placar  
-| Criatividade           | Regras simplificadas e notação legível    
-| Organização e clareza  | Código estruturado e comentado            
-
----
-
-## 🏁 Conclusão
-
-O projeto **Truco Mineiro** demonstra o uso de **comunicação entre processos** via rede, utilizando **sockets TCP** em C.
-Além disso, mostra uma aplicação prática de conceitos de **concorrência**, **troca de mensagens** e **sincronização de jogadas**.
-
-O resultado é um jogo funcional, simples e divertido — um exemplo didático de como unir **programação em rede** e **lógica de jogos clássicos**.
-
+  - **Felipe Galeti Gôngora** - [FGaleti](https://www.google.com/search?q=https://github.com/FGaleti)
+  - **Breno Nosima** - [BrenoNosima](https://www.google.com/search?q=https://github.com/BrenoNosima)

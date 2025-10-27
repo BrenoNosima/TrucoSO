@@ -1,8 +1,9 @@
-// server.c
-// Truco Mineiro - Servidor (Jogador 1)
-// Correcoes: terminação de buffers, inicializacao da memoria compartilhada,
-// mensagens sem acentos (pra evitar problemas de encoding no cmd), mutex.
-
+/* =======================================================
+ * truco_servidor_refatorado.c - Truco Mineiro (Servidor)
+ * Lógica de comunicação sequencial para evitar deadlocks.
+ * Compilar:
+ * gcc truco_servidor_refatorado.c -o truco.exe -lws2_32
+ * ======================================================= */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,309 +11,187 @@
 #include <winsock2.h>
 #include <windows.h>
 
-#pragma comment(lib,"ws2_32.lib") // link winsock
+#pragma comment(lib, "Ws2_32.lib")
 
-#define PORT 8080
-#define MAX_CARTAS 40
-#define MEM_NAME "Local\\TrucoMem"    // nome do segmento de memoria compartilhada
-#define MUTEX_NAME "Local\\TrucoMutex"// nome do mutex para sincronizar acesso
+#define PORTA 12345
+#define DECK_SIZE 40
+#define HAND_SIZE 3
+#define TARGET_POINTS 12
 
-// ----- Tipos e baralho -----
 typedef struct {
-    char nome[3];
-    char naipe[10];
-} Carta;
+    int server_pts;
+    int client_pts;
+    int turn;
+    int hand_num;
+    int round_num;
+    int game_over;
+    int client_hand[HAND_SIZE];
+    // NOVO: Campos para ver as cartas na mesa
+    int server_card_on_table;
+    int client_card_on_table;
+} GameState;
 
-Carta baralho[MAX_CARTAS] = {
-    {"4","Ouros"},{"5","Ouros"},{"6","Ouros"},{"7","Ouros"},{"Q","Ouros"},{"J","Ouros"},{"K","Ouros"},{"A","Ouros"},{"2","Ouros"},{"3","Ouros"},
-    {"4","Copas"},{"5","Copas"},{"6","Copas"},{"7","Copas"},{"Q","Copas"},{"J","Copas"},{"K","Copas"},{"A","Copas"},{"2","Copas"},{"3","Copas"},
-    {"4","Espadas"},{"5","Espadas"},{"6","Espadas"},{"7","Espadas"},{"Q","Espadas"},{"J","Espadas"},{"K","Espadas"},{"A","Espadas"},{"2","Espadas"},{"3","Espadas"},
-    {"4","Paus"},{"5","Paus"},{"6","Paus"},{"7","Paus"},{"Q","Paus"},{"J","Paus"},{"K","Paus"},{"A","Paus"},{"2","Paus"},{"3","Paus"}
-};
-
-// estrutura que ficara na memoria compartilhada
-typedef struct {
-    int vez;                    // 1 = servidor, 2 = cliente
-    int pontos_server;
-    int pontos_client;
-    char ultima_jogada[64];     // string descrevendo a ultima jogada
-    char status[128];           // mensagem de status (ex: resultado da rodada)
-} SharedMem;
-
-int calcularForca(Carta c) {
-    // mesma tabela de forca do seu codigo
-    if (strcmp(c.nome,"4")==0 && strcmp(c.naipe,"Paus")==0) return 14; // Zap
-    if (strcmp(c.nome,"7")==0 && strcmp(c.naipe,"Copas")==0) return 13;
-    if (strcmp(c.nome,"A")==0 && strcmp(c.naipe,"Espadas")==0) return 12;
-    if (strcmp(c.nome,"7")==0 && strcmp(c.naipe,"Ouros")==0) return 11;
-
-    if (strcmp(c.nome,"3")==0) return 10;
-    if (strcmp(c.nome,"2")==0) return 9;
-    if (strcmp(c.nome,"A")==0) return 8;
-    if (strcmp(c.nome,"K")==0) return 7;
-    if (strcmp(c.nome,"J")==0) return 6;
-    if (strcmp(c.nome,"Q")==0) return 5;
-    if (strcmp(c.nome,"7")==0) return 4;
-    if (strcmp(c.nome,"6")==0) return 3;
-    if (strcmp(c.nome,"5")==0) return 2;
-    if (strcmp(c.nome,"4")==0) return 1;
+const char *valor_nome[10] = {"A","2","3","4","5","6","7","J","Q","K"};
+const char *naipe_nome[4] = {"Paus","Copas","Espadas","Ouros"};
+int truco_ranking(int card_index) {
+    if (card_index < 0 || card_index >= DECK_SIZE) return -1;
+    int value = card_index / 4; int suit = card_index % 4;
+    if (value == 3 && suit == 0) return 100; if (value == 6 && suit == 1) return 99;
+    if (value == 0 && suit == 2) return 98; if (value == 6 && suit == 3) return 97;
+    if (value == 2) return 90; if (value == 1) return 80; if (value == 0) return 70;
+    if (value == 9) return 60; if (value == 7) return 50; if (value == 8) return 40;
+    if (value == 6 && suit == 0) return 39; if (value == 6 && suit == 2) return 38;
+    if (value == 5) return 30; if (value == 4) return 20; if (value == 3) return 10;
     return 0;
 }
+void print_card(int card_index) {
+    if (card_index < 0 || card_index >= DECK_SIZE) { printf("(vazia)"); return; }
+    int value = card_index / 4; int suit = card_index % 4;
+    printf("%s de %s", valor_nome[value], naipe_nome[suit]);
+}
 
-void embaralhar(int *cartas, int n) {
-    for (int i = 0; i < n; i++) {
-        int j = rand() % n;
-        int temp = cartas[i];
-        cartas[i] = cartas[j];
-        cartas[j] = temp;
+void shuffle_deck(int deck[]) {
+    for (int i = 0; i < DECK_SIZE; ++i) deck[i] = i;
+    for (int i = DECK_SIZE - 1; i > 0; --i) {
+        int j = rand() % (i + 1);
+        int t = deck[i]; deck[i] = deck[j]; deck[j] = t;
     }
+}
+
+void send_state(SOCKET client_socket, GameState* state) {
+    send(client_socket, (char*)state, sizeof(GameState), 0);
+}
+
+int get_server_choice(int hand[]) {
+    int choice_idx = -1;
+    do {
+        printf("Sua mão: ");
+        for (int i = 0; i < HAND_SIZE; i++) if (hand[i] != -1) { printf("%d) ", i + 1); print_card(hand[i]); printf(" | "); }
+        printf("\nEscolha uma carta (1-3): ");
+        scanf("%d", &choice_idx);
+        choice_idx--;
+    } while (choice_idx < 0 || choice_idx >= 3 || hand[choice_idx] == -1);
+    return choice_idx;
 }
 
 int main() {
-    // --- inicializacao Winsock ---
-    WSADATA wsa;
-    SOCKET server_fd = INVALID_SOCKET, client_socket = INVALID_SOCKET;
-    struct sockaddr_in server, client;
-    int c;
-    char buffer[1024];
-
+    SetConsoleOutputCP(65001);
     srand((unsigned)time(NULL));
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
 
-    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
-        printf("WSAStartup falhou\n");
-        return 1;
-    }
+    SOCKET listen_sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in srv;
+    srv.sin_family = AF_INET;
+    srv.sin_addr.s_addr = INADDR_ANY;
+    srv.sin_port = htons(PORTA);
+    bind(listen_sock, (struct sockaddr*)&srv, sizeof(srv));
+    listen(listen_sock, 1);
 
-    // --- criar memoria compartilhada e mutex ---
-    BOOL createdNew = TRUE;
-    HANDLE hMap = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(SharedMem), MEM_NAME);
-    if (hMap == NULL) {
-        printf("Erro CreateFileMapping: %lu\n", GetLastError());
-        WSACleanup();
-        return 1;
-    }
-    if (GetLastError() == ERROR_ALREADY_EXISTS) createdNew = FALSE;
+    printf("[servidor] aguardando cliente em 127.0.0.1:%d ...\n", PORTA);
+    SOCKET client_socket = accept(listen_sock, NULL, NULL);
+    printf("[servidor] Cliente conectado!\n");
+    closesocket(listen_sock);
 
-    SharedMem *mem = (SharedMem*) MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMem));
-    if (mem == NULL) {
-        printf("Erro MapViewOfFile: %lu\n", GetLastError());
-        CloseHandle(hMap);
-        WSACleanup();
-        return 1;
-    }
+    GameState state;
+    memset(&state, 0, sizeof(GameState));
+    int deck[DECK_SIZE];
+    int server_hand[HAND_SIZE];
+    int mano = 1;
 
-    // inicializa mutex nomeado para sincronizar acesso a memoria
-    HANDLE hMutex = CreateMutexA(NULL, FALSE, MUTEX_NAME);
-    if (hMutex == NULL) {
-        printf("Erro CreateMutex: %lu\n", GetLastError());
-        UnmapViewOfFile(mem);
-        CloseHandle(hMap);
-        WSACleanup();
-        return 1;
-    }
-
-    // se a memoria foi criada agora, zera e inicializa
-    WaitForSingleObject(hMutex, INFINITE);
-    if (createdNew) {
-        memset(mem, 0, sizeof(SharedMem));
-        mem->vez = 1; // servidor comeca por convencao
-        mem->pontos_server = 0;
-        mem->pontos_client = 0;
-        strcpy(mem->ultima_jogada, "nenhuma");
-        strcpy(mem->status, "aguardando inicio");
-    } else {
-        // se ja existia, so garantir campos validos (nao sobrescrever)
-        if (mem->vez != 1 && mem->vez != 2) mem->vez = 1;
-    }
-    ReleaseMutex(hMutex);
-
-    // --- criar socket, bind e listen ---
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd == INVALID_SOCKET) {
-        printf("Erro ao criar socket\n");
-        goto cleanup;
-    }
-
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = INADDR_ANY;
-    server.sin_port = htons(PORT);
-
-    if (bind(server_fd, (struct sockaddr*)&server, sizeof(server)) == SOCKET_ERROR) {
-        printf("bind falhou: %d\n", WSAGetLastError());
-        goto cleanup;
-    }
-
-    listen(server_fd, 1);
-    printf("Aguardando conexao na porta %d...\n", PORT);
-    c = sizeof(struct sockaddr_in);
-    client_socket = accept(server_fd, (struct sockaddr*)&client, &c);
-    if (client_socket == INVALID_SOCKET) {
-        printf("accept falhou\n");
-        goto cleanup;
-    }
-    printf("Jogador conectado!\n");
-
-    // laco principal do jogo (placar ate 12)
-    while (1) {
-        // ler placar da memoria compartilhada para decidir se continua
-        WaitForSingleObject(hMutex, INFINITE);
-        int pontos_server = mem->pontos_server;
-        int pontos_client = mem->pontos_client;
-        ReleaseMutex(hMutex);
-        if (pontos_server >= 12 || pontos_client >= 12) break;
-
-        // embaralhar e distribuir
-        int cartas_idx[MAX_CARTAS];
-        for (int i = 0; i < MAX_CARTAS; i++) cartas_idx[i] = i;
-        embaralhar(cartas_idx, MAX_CARTAS);
-
-        Carta mao_server[3], mao_client[3];
-        for (int i = 0; i < 3; i++) {
-            mao_server[i] = baralho[cartas_idx[i]];
-            mao_client[i] = baralho[cartas_idx[i+3]];
+    while (!state.game_over && state.server_pts < TARGET_POINTS && state.client_pts < TARGET_POINTS) {
+        state.hand_num++;
+        printf("\n=== MÃO %d (Servidor %d x %d Cliente) ===\n", state.hand_num, state.server_pts, state.client_pts);
+        
+        shuffle_deck(deck);
+        for (int i = 0; i < HAND_SIZE; i++) {
+            server_hand[i] = deck[i * 2];
+            state.client_hand[i] = deck[i * 2 + 1];
         }
 
-        // envia as cartas do cliente (sempre envie de forma clara)
-        char msg[512];
-        sprintf(msg, "Suas cartas: %s de %s | %s de %s | %s de %s\n",
-                mao_client[0].nome, mao_client[0].naipe,
-                mao_client[1].nome, mao_client[1].naipe,
-                mao_client[2].nome, mao_client[2].naipe);
-        send(client_socket, msg, (int)strlen(msg), 0);
+        int vaza_winner[3] = {0,0,0};
+        int last_vaza_winner = 0;
 
-        // mostra as cartas do servidor no console
-        printf("Suas cartas (servidor): %s de %s | %s de %s | %s de %s\n",
-               mao_server[0].nome, mao_server[0].naipe,
-               mao_server[1].nome, mao_server[1].naipe,
-               mao_server[2].nome, mao_server[2].naipe);
+        for (int round = 0; round < 3; round++) {
+            state.round_num = round + 1;
+            state.server_card_on_table = -1;
+            state.client_card_on_table = -1;
 
-        int rodada = 1;
-        int vitorias_server = 0, vitorias_client = 0;
+            int first_player = (round == 0) ? mano : (last_vaza_winner != 0 ? last_vaza_winner : mano);
+            int second_player = (first_player == 1) ? 2 : 1;
+            int server_card = -1, client_card = -1;
 
-        // cada partida e melhor de 3 (quem ganha 2 leva a partida)
-        while (vitorias_server < 2 && vitorias_client < 2) {
-            // 1) servidor escolhe carta
-            int esc_server = -1;
-            while (esc_server < 0 || esc_server > 2) {
-                printf("\nRodada %d - Escolha sua carta (1-3): ", rodada);
-                if (scanf("%d", &esc_server) != 1) {
-                    // limpeza se input invalido
-                    while (getchar() != '\n');
-                    esc_server = -1;
-                    continue;
-                }
-                esc_server--; // de 1..3 para 0..2
-            }
+            // --- JOGADA DO PRIMEIRO JOGADOR ---
+            state.turn = first_player;
+            printf("\n-- Rodada %d: vez do jogador %d --\n", state.round_num, state.turn);
+            send_state(client_socket, &state);
 
-            // 2) avisar cliente que e sua vez de escolher (e atualizar memoria compartilhada)
-            char prompt[64];
-            sprintf(prompt, "Rodada %d - Escolha sua carta (1-3): ", rodada);
-            send(client_socket, prompt, (int)strlen(prompt), 0);
-
-            // atualiza memoria compartilhada: vez = 2 (cliente escolhe)
-            WaitForSingleObject(hMutex, INFINITE);
-            mem->vez = 2;
-            snprintf(mem->ultima_jogada, sizeof(mem->ultima_jogada), "Servidor escolheu (oculto) - aguardando cliente");
-            snprintf(mem->status, sizeof(mem->status), "rodada %d: aguardando escolha do cliente", rodada);
-            ReleaseMutex(hMutex);
-
-            // 3) receber escolha do cliente
-            memset(buffer, 0, sizeof(buffer));
-            int bytes = recv(client_socket, buffer, (int)sizeof(buffer)-1, 0);
-            if (bytes <= 0) {
-                printf("Cliente desconectou ou erro recv\n");
-                goto cleanup;
-            }
-            // garantir terminação correta
-            buffer[bytes] = '\0';
-            // remover CR/LF
-            buffer[strcspn(buffer, "\r\n")] = '\0';
-            int esc_client = atoi(buffer) - 1;
-            if (esc_client < 0 || esc_client > 2) esc_client = 0; // fallback
-
-            // montar cartas escolhidas
-            Carta carta_s = mao_server[esc_server];
-            Carta carta_c = mao_client[esc_client];
-
-            int forca_s = calcularForca(carta_s);
-            int forca_c = calcularForca(carta_c);
-
-            char resultado[512];
-            if (forca_s > forca_c) {
-                vitorias_server++;
-                snprintf(resultado, sizeof(resultado),
-                         "Rodada %d: Voce jogou %s de %s | Adversario jogou %s de %s -> Servidor ganhou a rodada!\n",
-                         rodada, carta_c.nome, carta_c.naipe, carta_s.nome, carta_s.naipe);
-            } else if (forca_s < forca_c) {
-                vitorias_client++;
-                snprintf(resultado, sizeof(resultado),
-                         "Rodada %d: Voce jogou %s de %s | Adversario jogou %s de %s -> Cliente ganhou a rodada!\n",
-                         rodada, carta_c.nome, carta_c.naipe, carta_s.nome, carta_s.naipe);
+            if (state.turn == 1) {
+                int choice_idx = get_server_choice(server_hand);
+                server_card = server_hand[choice_idx];
+                server_hand[choice_idx] = -1;
+                state.server_card_on_table = server_card;
+                printf("Você jogou: "); print_card(server_card); printf("\n");
             } else {
-                snprintf(resultado, sizeof(resultado),
-                         "Rodada %d: Cartas iguais! (%s de %s vs %s de %s) -> Empate!\n",
-                         rodada, carta_c.nome, carta_c.naipe, carta_s.nome, carta_s.naipe);
+                printf("Aguardando jogada do cliente...\n");
+                int client_choice_idx = -1;
+                if (recv(client_socket, (char*)&client_choice_idx, sizeof(int), 0) <= 0) { state.game_over = 1; break; }
+                client_card = state.client_hand[client_choice_idx];
+                state.client_hand[client_choice_idx] = -1;
+                state.client_card_on_table = client_card;
+                printf("Cliente jogou: "); print_card(client_card); printf("\n");
             }
 
-            // atualizar memoria compartilhada com resultado e jogadas
-            WaitForSingleObject(hMutex, INFINITE);
-            mem->vez = 1; // volta a vez ao servidor
-            snprintf(mem->ultima_jogada, sizeof(mem->ultima_jogada),
-                     "S:%s/%s vs C:%s/%s",
-                     carta_s.nome, carta_s.naipe, carta_c.nome, carta_c.naipe);
-            snprintf(mem->status, sizeof(mem->status), "%s", resultado);
-            ReleaseMutex(hMutex);
+            // --- JOGADA DO SEGUNDO JOGADOR ---
+            state.turn = second_player;
+            printf("-- Rodada %d: vez do jogador %d --\n", state.round_num, state.turn);
+            send_state(client_socket, &state);
+            
+            if (state.turn == 1) {
+                int choice_idx = get_server_choice(server_hand);
+                server_card = server_hand[choice_idx];
+                server_hand[choice_idx] = -1;
+                state.server_card_on_table = server_card;
+                printf("Você jogou: "); print_card(server_card); printf("\n");
+            } else {
+                printf("Aguardando jogada do cliente...\n");
+                int client_choice_idx = -1;
+                if (recv(client_socket, (char*)&client_choice_idx, sizeof(int), 0) <= 0) { state.game_over = 1; break; }
+                client_card = state.client_hand[client_choice_idx];
+                state.client_hand[client_choice_idx] = -1;
+                state.client_card_on_table = client_card;
+                printf("Cliente jogou: "); print_card(client_card); printf("\n");
+            }
+            if (state.game_over) break;
 
-            // enviar resultado ao cliente e imprimir no servidor
-            send(client_socket, resultado, (int)strlen(resultado), 0);
-            printf("%s", resultado);
-
-            rodada++;
+            int r_server = truco_ranking(state.server_card_on_table);
+            int r_client = truco_ranking(state.client_card_on_table);
+            if (r_server > r_client) {
+                printf(">> Servidor venceu a rodada %d <<\n", state.round_num);
+                vaza_winner[round] = 1; last_vaza_winner = 1;
+            } else if (r_client > r_server) {
+                printf(">> Cliente venceu a rodada %d <<\n", state.round_num);
+                vaza_winner[round] = 2; last_vaza_winner = 2;
+            } else {
+                printf(">> Rodada %d empatou! <<\n", state.round_num);
+                vaza_winner[round] = 0;
+            }
+            Sleep(2000); // Pausa para ver o resultado da rodada
         }
+        if (state.game_over) break;
 
-        // atualizar placar global na memoria
-        WaitForSingleObject(hMutex, INFINITE);
-        if (vitorias_server > vitorias_client) {
-            mem->pontos_server += 1;
-            snprintf(mem->status, sizeof(mem->status), "Partida vencida pelo servidor");
-        } else {
-            mem->pontos_client += 1;
-            snprintf(mem->status, sizeof(mem->status), "Partida vencida pelo cliente");
-        }
-        int pts_s = mem->pontos_server;
-        int pts_c = mem->pontos_client;
-        ReleaseMutex(hMutex);
+        int server_vazas = 0, client_vazas = 0;
+        for(int i=0; i<3; i++) { if(vaza_winner[i] == 1) server_vazas++; if(vaza_winner[i] == 2) client_vazas++; }
+        if(server_vazas > client_vazas){ printf(">>>> Servidor venceu a MÃO! <<<<\n"); state.server_pts += 1;
+        } else if (client_vazas > server_vazas){ printf(">>>> Cliente venceu a MÃO! <<<<\n"); state.client_pts += 1;
+        } else { printf(">>>> MÃO CANGOU (empatou)! <<<<\n"); }
 
-        // reportar placar para cliente
-        char placar_msg[128];
-        sprintf(placar_msg, "\nPlacar: Servidor %d x %d Cliente\n", pts_s, pts_c);
-        send(client_socket, placar_msg, (int)strlen(placar_msg), 0);
-        printf("%s", placar_msg);
+        mano = (mano == 1) ? 2 : 1;
+        if (state.server_pts >= TARGET_POINTS || state.client_pts >= TARGET_POINTS) state.game_over = 1;
     }
 
-    // fim de jogo: anunciar vencedor (com base na memoria compartilhada)
-    WaitForSingleObject(hMutex, INFINITE);
-    int final_s = mem->pontos_server;
-    int final_c = mem->pontos_client;
-    ReleaseMutex(hMutex);
+    send_state(client_socket, &state);
+    printf("\n--- FIM DE JOGO ---\nPlacar final: Servidor %d x %d Cliente\n", state.server_pts, state.client_pts);
 
-    char fim[128];
-    if (final_s >= 12) sprintf(fim, "Fim de jogo! Servidor venceu!\n");
-    else sprintf(fim, "Fim de jogo! Cliente venceu!\n");
-
-    send(client_socket, fim, (int)strlen(fim), 0);
-    printf("%s", fim);
-
-cleanup:
-    // liberar recursos
-    if (client_socket != INVALID_SOCKET) closesocket(client_socket);
-    if (server_fd != INVALID_SOCKET) closesocket(server_fd);
-
-    // unmap e fechar handles
-    UnmapViewOfFile(mem);
-    CloseHandle(hMap);
-    CloseHandle(hMutex);
-
-    WSACleanup();
-    return 0;
+    closesocket(client_socket); WSACleanup(); return 0;
 }
