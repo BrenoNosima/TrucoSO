@@ -52,6 +52,28 @@ void print_card(int card_index) {
     int value = card_index / 4; int suit = card_index % 4;
     printf("%s de %s", valor_nome[value], naipe_nome[suit]);
 }
+
+/* Mostra o estado do jogo no console do servidor (UI semelhante ao cliente) */
+void display_game_server(int server_hand[], GameState* state, SharedPlacar* shm) {
+    system("cls");
+    printf("=== M肙 %d | Rodada %d ===\n", state->hand_num, state->round_num);
+    printf("PLACAR: Servidor %d x %d Cliente\n", shm->p1_pts, shm->p2_pts);
+    printf("----------------------------------\n");
+    printf("MESA:\n");
+    printf("  Servidor: ");
+    if(state->server_card_on_table != -1) print_card(state->server_card_on_table); else printf("---");
+    printf("\n  Cliente:  ");
+    if(state->client_card_on_table != -1) print_card(state->client_card_on_table); else printf("---");
+    printf("\n----------------------------------\n");
+    printf("SUA M肙:\n");
+    for(int i=0; i<HAND_SIZE; i++){
+        if(server_hand[i] != -1){ printf("  %d) ", i+1); print_card(server_hand[i]); printf("\n"); }
+    }
+    printf("----------------------------------\n");
+
+    if (state->turn == 1) printf(">>> SUA VEZ DE JOGAR! <<<\n");
+    else printf(">>> Aguardando jogada do cliente... <<<\n");
+}
 void shuffle_deck(int deck[]) {
     for (int i = 0; i < DECK_SIZE; ++i) deck[i] = i;
     for (int i = DECK_SIZE - 1; i > 0; --i) { int j = rand() % (i + 1); int t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
@@ -115,6 +137,11 @@ int main() {
     closesocket(listen_sock);
 
     GameState state;
+    memset(&state, 0, sizeof(state));
+    state.hand_num = 0;
+    state.round_num = 0;
+    state.server_card_on_table = -1;
+    state.client_card_on_table = -1;
     shm_placar->p1_pts = 0;     // NOVO: Inicializa placar na mem贸ria compartilhada
     shm_placar->p2_pts = 0;     // NOVO: Inicializa placar na mem贸ria compartilhada
     shm_placar->game_over = 0;  // NOVO: Inicializa placar na mem贸ria compartilhada
@@ -124,11 +151,16 @@ int main() {
 
     while (shm_placar->game_over == 0) { // NOVO: Loop principal agora usa a flag da mem贸ria compartilhada
         state.hand_num++;
-        printf("\n=== M脙O %d (Servidor %d x %d Cliente) ===\n", state.hand_num, shm_placar->p1_pts, shm_placar->p2_pts);
+        state.round_num = 0;
+    state.server_card_on_table = -1;
+    state.client_card_on_table = -1;
         
-        // ... (o miolo do loop do jogo continua exatamente o mesmo) ...
-        shuffle_deck(deck);
-        for (int i = 0; i < HAND_SIZE; i++) { server_hand[i] = deck[i * 2]; state.client_hand[i] = deck[i * 2 + 1]; }
+    // ... (o miolo do loop do jogo continua exatamente o mesmo) ...
+    shuffle_deck(deck);
+    for (int i = 0; i < HAND_SIZE; i++) { server_hand[i] = deck[i * 2]; state.client_hand[i] = deck[i * 2 + 1]; }
+    /* Mostrar estado inicial da m鉶 (ap髎 distribuir) e enviar para o cliente */
+    display_game_server(server_hand, &state, shm_placar);
+    send_state(client_socket, &state);
         int vaza_winner[3] = {0,0,0}; int last_vaza_winner = 0;
         for (int round = 0; round < 3; round++) {
             state.round_num = round + 1;
@@ -137,32 +169,38 @@ int main() {
             int second_player = (first_player == 1) ? 2 : 1;
             int server_card = -1, client_card = -1;
             state.turn = first_player;
-            printf("\n-- Rodada %d: vez do jogador %d --\n", state.round_num, state.turn);
+            /* Mostrar estado antes da jogada e enviar ao cliente */
+            display_game_server(server_hand, &state, shm_placar);
             send_state(client_socket, &state);
             if (state.turn == 1) {
                 int choice_idx = get_server_choice(server_hand);
                 server_card = server_hand[choice_idx]; server_hand[choice_idx] = -1; state.server_card_on_table = server_card;
-                printf("Voc锚 jogou: "); print_card(server_card); printf("\n");
+                /* Atualiza UI e avisa o cliente */
+                display_game_server(server_hand, &state, shm_placar);
+                send_state(client_socket, &state);
             } else {
-                printf("Aguardando jogada do cliente...\n");
+                /* Espera jogada do cliente */
                 int client_choice_idx = -1;
                 if (recv(client_socket, (char*)&client_choice_idx, sizeof(int), 0) <= 0) { shm_placar->game_over = 1; break; }
                 client_card = state.client_hand[client_choice_idx]; state.client_hand[client_choice_idx] = -1; state.client_card_on_table = client_card;
-                printf("Cliente jogou: "); print_card(client_card); printf("\n");
+                display_game_server(server_hand, &state, shm_placar);
+                send_state(client_socket, &state);
             }
             state.turn = second_player;
-            printf("-- Rodada %d: vez do jogador %d --\n", state.round_num, state.turn);
+            /* Segunda jogada da rodada: atualizar UI e enviar estado */
+            display_game_server(server_hand, &state, shm_placar);
             send_state(client_socket, &state);
             if (state.turn == 1) {
                 int choice_idx = get_server_choice(server_hand);
                 server_card = server_hand[choice_idx]; server_hand[choice_idx] = -1; state.server_card_on_table = server_card;
-                printf("Voc锚 jogou: "); print_card(server_card); printf("\n");
+                display_game_server(server_hand, &state, shm_placar);
+                send_state(client_socket, &state);
             } else {
-                printf("Aguardando jogada do cliente...\n");
                 int client_choice_idx = -1;
                 if (recv(client_socket, (char*)&client_choice_idx, sizeof(int), 0) <= 0) { shm_placar->game_over = 1; break; }
                 client_card = state.client_hand[client_choice_idx]; state.client_hand[client_choice_idx] = -1; state.client_card_on_table = client_card;
-                printf("Cliente jogou: "); print_card(client_card); printf("\n");
+                display_game_server(server_hand, &state, shm_placar);
+                send_state(client_socket, &state);
             }
             if (shm_placar->game_over) break;
             int r_server = truco_ranking(state.server_card_on_table);
@@ -170,6 +208,9 @@ int main() {
             if (r_server > r_client) { printf(">> Servidor venceu a rodada %d <<\n", state.round_num); vaza_winner[round] = 1; last_vaza_winner = 1;
             } else if (r_client > r_server) { printf(">> Cliente venceu a rodada %d <<\n", state.round_num); vaza_winner[round] = 2; last_vaza_winner = 2;
             } else { printf(">> Rodada %d empatou! <<\n", state.round_num); vaza_winner[round] = 0; }
+            /* Mostrar resultado da rodada e enviar ao cliente */
+            display_game_server(server_hand, &state, shm_placar);
+            send_state(client_socket, &state);
             Sleep(2000);
         }
         if (shm_placar->game_over) break;

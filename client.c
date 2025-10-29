@@ -8,7 +8,6 @@
 #include <windows.h> // NOVO: Necessário para a Memória Compartilhada
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -62,7 +61,8 @@ void display_game() {
     else printf(">>> Aguardando jogada do servidor... <<<\n");
 }
 
-void* receber_thread(void* arg) {
+DWORD WINAPI receber_thread(LPVOID arg) {
+    (void)arg;
     while (jogoAtivo) {
         int bytes = recv(sock, (char*)&gameState, sizeof(GameState), 0);
         if (bytes <= 0) {
@@ -72,7 +72,7 @@ void* receber_thread(void* arg) {
         if (shm_placar->game_over) jogoAtivo = 0;
         display_game();
     }
-    return NULL;
+    return 0;
 }
 
 int main() {
@@ -110,8 +110,9 @@ int main() {
         printf("Erro ao conectar.\n"); closesocket(sock); return 1;
     }
     
-    pthread_t thread_id;
-    pthread_create(&thread_id, NULL, receber_thread, NULL);
+    HANDLE threadHandle;
+    DWORD threadId;
+    threadHandle = CreateThread(NULL, 0, receber_thread, NULL, 0, &threadId);
 
     while(jogoAtivo) {
         if(gameState.turn == 2) {
@@ -129,7 +130,8 @@ int main() {
         Sleep(100);
     }
 
-    pthread_join(thread_id, NULL);
+    WaitForSingleObject(threadHandle, INFINITE);
+    CloseHandle(threadHandle);
     printf("\n--- FIM DE JOGO ---\n");
     printf("Placar final: Servidor %d x %d Você\n", shm_placar->p1_pts, shm_placar->p2_pts);
     printf("\n[encerrado] Pressione Enter para sair.\n");
