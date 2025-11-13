@@ -39,12 +39,11 @@ typedef struct
     int client_card_on_table;
     char message[100]; // Campo para mensagens de status
     // Apostas da mão (Truco)
-    int hand_value;              // 1,3,6,9,12
-    int truco_pending;           // 0/1
-    int truco_requester;         // 1=Servidor, 2=Cliente
-    int truco_target;            // próximo valor se aceito
-    int awaiting_truco_response; // 0/1
-    int raise_rights;            // 1=Servidor, 2=Cliente
+	    int hand_value;              // 1 ou 3
+	    int truco_pending;           // 0/1
+	    int truco_requester;         // 1=Servidor, 2=Cliente
+	    int awaiting_truco_response; // 0/1
+	    int truco_allowed;           // 1=Truco pode ser pedido, 0=Truco não pode ser pedido
     int message_seq;             // sequência de mensagem para evitar duplicação
 } GameState;
 
@@ -102,19 +101,28 @@ int truco_ranking(int card_index) {
     return 0;
 }
 
-const char *valor_nome[10] = {"A", "2", "3", "4", "5", "6", "7", "J", "Q", "K"};
-const char *naipe_nome[4] = {"Paus", "Copas", "Espadas", "Ouros"};
-void print_card(int card_index)
-{
-    if (card_index < 0 || card_index >= DECK_SIZE)
-    {
-        printf("(vazia)");
-        return;
-    }
-    int value = card_index / 4;
-    int suit = card_index % 4;
-    printf("%s de %s", valor_nome[value], naipe_nome[suit]);
-}
+	const char *valor_nome[10] = {"A", "2", "3", "4", "5", "6", "7", "J", "Q", "K"};
+	const char *naipe_nome[4] = {"Paus", "Copas", "Espadas", "Ouros"};
+	
+	// Retorna a string da carta formatada em um buffer
+	void get_card_string(int card_index, char *buffer)
+	{
+	    if (card_index < 0 || card_index >= DECK_SIZE)
+	    {
+	        strcpy(buffer, "---"); // 3 caracteres para "vazia"
+	        return;
+	    }
+	    int value = card_index / 4;
+	    int suit = card_index % 4;
+	    sprintf(buffer, "%s de %s", valor_nome[value], naipe_nome[suit]);
+	}
+	
+	void print_card(int card_index)
+	{
+	    char buffer[20]; // Buffer para a string da carta
+	    get_card_string(card_index, buffer);
+	    printf("%s", buffer);
+	}
 
 SOCKET sock;
 GameState gameState;
@@ -126,101 +134,112 @@ void display_game()
     system("cls");
     printf("=== MÃO %d | Rodada %d ===\n", gameState.hand_num, gameState.round_num);
     printf("PLACAR: Servidor %d x %d Você(Cliente)\n", shm_placar->p1_pts, shm_placar->p2_pts);
-    printf("VALENDO: %d ponto(s)\n", gameState.hand_value > 0 ? gameState.hand_value : 1);
+	    printf("VALENDO: %d ponto(s)\n", gameState.hand_value);
     printf("----------------------------------\n");
-    printf("MESA:\n");
-    printf("  Servidor: ");
-    if (gameState.server_card_on_table != -1)
-        print_card(gameState.server_card_on_table);
-    else
-        printf("---");
-    printf("\n  Você(Cliente):     ");
-    if (gameState.client_card_on_table != -1)
-        print_card(gameState.client_card_on_table);
-    else
-        printf("---");
-    printf("\n----------------------------------\n");
-    printf("SUA MÃO:\n");
-    for (int i = 0; i < HAND_SIZE; i++)
-    {
-        if (gameState.client_hand[i] != -1)
-        {
-            printf("  %d) ", i + 1);
-            print_card(gameState.client_hand[i]);
-            printf("\n");
-        }
-    }
+	    printf("MESA:\n");
+	    char server_card_str[20], client_card_str[20];
+	    get_card_string(gameState.server_card_on_table, server_card_str);
+	    get_card_string(gameState.client_card_on_table, client_card_str);
+	    
+	    // Usando largura fixa para garantir alinhamento
+	    printf("  Servidor:      %-15s\n", server_card_str);
+	    printf("  Você(Cliente): %-15s\n", client_card_str);
+	    printf("----------------------------------\n");
+	    printf("SUA MÃO:\n");
+	    for (int i = 0; i < HAND_SIZE; i++)
+	    {
+	        if (gameState.client_hand[i] != -1)
+	        {
+	            char card_str[20];
+	            get_card_string(gameState.client_hand[i], card_str);
+	            printf("  %d) %-15s\n", i + 1, card_str);
+	        }
+	    }
     printf("----------------------------------\n");
 
-    // Mensagem de status da rodada (convertida para perspectiva do cliente)
-    static int last_seq_printed = -1;
-    if (gameState.message[0] != '\0' && gameState.message_seq != last_seq_printed)
-    {
-        char client_message[100];
+	// Mensagem de status da rodada (convertida para perspectiva do cliente)
+	    // A variável last_seq_printed agora é declarada em receber_thread.
+	    if (gameState.message[0] != '\0')
+	    {
+	        char client_message[100];
         strcpy(client_message, gameState.message);
+        // Ajusta a mensagem para a perspectiva do cliente
         if (strstr(client_message, "Você (Servidor)"))
             strcpy(client_message, "O Servidor venceu a rodada!");
         else if (strstr(client_message, "O Cliente"))
             strcpy(client_message, "Parabéns, você(Cliente) venceu a rodada!");
-        printf(">>> %s <<<\n", client_message);
-        printf("----------------------------------\n");
-        last_seq_printed = gameState.message_seq;
-    }
+        else if (strstr(client_message, "Servidor correu! Cliente ganha"))
+            strcpy(client_message, "Servidor correu! Você ganha a mão!");
+        else if (strstr(client_message, "Cliente correu! Servidor ganha"))
+            strcpy(client_message, "Você correu! O Servidor ganha a mão!");
+        
+	        printf(">>> %s <<<\n", client_message);
+	        printf("----------------------------------\n");
+	        // A atualização de last_seq_printed é feita em receber_thread
+	    }
 
     // Exibir histórico antes do prompt, para manter o prompt como última linha
     exibirHistorico();
 
-    if (gameState.turn == 2) {
-        printf(">>> SUA VEZ DE JOGAR! <<<\n");
-        if (gameState.hand_value < 12 && gameState.raise_rights == 2 && !gameState.awaiting_truco_response) {
-            int nv = (gameState.hand_value>=12?12:(gameState.hand_value>=9?12:(gameState.hand_value>=6?9:(gameState.hand_value>=3?6:3))));
-            printf("(1-3 carta, 9=PEDIR %d) ", nv);
-        } else printf("(1-3 carta) ");
-        fflush(stdout);
-    } else {
-        printf(">>> Aguardando jogada do servidor... <<<\n");
-    }
+	    if (gameState.turn == 2 && !gameState.awaiting_truco_response) {
+	        printf(">>> SUA VEZ DE JOGAR! <<<\n");
+	        if (gameState.hand_value == 1 && gameState.truco_allowed == 1) {
+	            printf("(1-3 carta, 9=PEDIR TRUCO) ");
+	        } else printf("(1-3 carta) ");
+	        fflush(stdout);
+	    } else if (gameState.awaiting_truco_response && gameState.truco_requester == 1) {
+	        // Servidor pediu truco, cliente deve responder
+	        printf(">>> TRUCO! Servidor pediu. Aceitar (1) ou Correr (2)? ");
+	        fflush(stdout);
+	    } else {
+	        printf(">>> Aguardando jogada do servidor... <<<\n");
+	    }
 }
 
-DWORD WINAPI receber_thread(LPVOID arg)
-{
-    (void)arg;
-    while (jogoAtivo)
-    {
-        int bytes = recv(sock, (char *)&gameState, sizeof(GameState), 0);
-        if (bytes <= 0)
-        {
-            printf("\n[socket] Servidor desconectou.\n");
-            jogoAtivo = 0;
-            break;
-        }
-        if (shm_placar->game_over)
-            jogoAtivo = 0;
-        // Detecta mudança de mão/rodada para gerenciar histórico local
-        static int last_hand_num = 0;
-        static int last_round_num = 0;
-
-        if (gameState.hand_num != last_hand_num) {
-            // Nova mão: reinicia histórico local
-            iniciarNovaMao();
-            last_hand_num = gameState.hand_num;
-            last_round_num = 0;
-        }
-
-        // Quando a rodada mudou e ambas as cartas estão na mesa, registra o resultado
-        if (gameState.round_num != last_round_num && gameState.server_card_on_table != -1 && gameState.client_card_on_table != -1) {
-            int r_server = truco_ranking(gameState.server_card_on_table);
-            int r_client = truco_ranking(gameState.client_card_on_table);
-            if (r_server > r_client) registrarResultadoRodada("Servidor");
-            else if (r_client > r_server) registrarResultadoRodada("Cliente");
-            else registrarResultadoRodada("Empate");
-            last_round_num = gameState.round_num;
-        }
-
-        display_game();
-    }
-    return 0;
-}
+	DWORD WINAPI receber_thread(LPVOID arg)
+	{
+	    (void)arg;
+	    static int last_seq_printed = -1; // Variável estática para rastrear a última mensagem exibida
+	    while (jogoAtivo)
+	    {
+	        int bytes = recv(sock, (char *)&gameState, sizeof(GameState), 0);
+	        if (bytes <= 0)
+	        {
+	            printf("\n[socket] Servidor desconectou.\n");
+	            jogoAtivo = 0;
+	            break;
+	        }
+	        if (shm_placar->game_over)
+	            jogoAtivo = 0;
+	        // Detecta mudança de mão/rodada para gerenciar histórico local
+	        static int last_hand_num = 0;
+	        static int last_round_num = 0;
+	
+	        if (gameState.hand_num != last_hand_num) {
+	            // Nova mão: reinicia histórico local
+	            iniciarNovaMao();
+	            last_hand_num = gameState.hand_num;
+	            last_round_num = 0;
+	        }
+	
+	        // O servidor envia o estado FINAL da rodada (com o resultado e a mensagem)
+	        // O registro do resultado da rodada deve ser feito no cliente apenas quando o servidor
+	        // envia o estado com a mensagem de resultado, e a rodada ainda não foi registrada.
+	        if (gameState.message[0] != '\0' && gameState.message_seq != last_seq_printed) {
+	            // Se a mensagem indica o resultado da rodada, registra no histórico local
+	            if (strstr(gameState.message, "venceu a rodada!")) {
+	                if (strstr(gameState.message, "Servidor")) registrarResultadoRodada("Servidor");
+	                else if (strstr(gameState.message, "Cliente")) registrarResultadoRodada("Cliente");
+	            } else if (strstr(gameState.message, "Rodada empatou!")) {
+	                registrarResultadoRodada("Empate");
+	            }
+	            last_seq_printed = gameState.message_seq;
+	        }
+	
+	        display_game();
+	    }
+	    return 0;
+	}
 
 int main()
 {
@@ -272,33 +291,50 @@ int main()
 
     while (jogoAtivo)
     {
-        // Se há um pedido de TRUCO do servidor aguardando resposta, perguntar imediatamente
-        if (gameState.awaiting_truco_response && gameState.truco_requester == 1)
-        {
-            int opc = 0; int ch;
-            do {
-                printf("Servidor pediu TRUCO! Aceita (1) ou corre (2)?: ");
-                if (scanf("%d", &opc) != 1) {
-                    while ((ch = getchar()) != '\n' && ch != EOF) ;
-                    opc = 0; continue;
-                }
-                while ((ch = getchar()) != '\n' && ch != EOF) ;
-            } while (opc != 1 && opc != 2);
+	        // Se há um pedido de TRUCO do servidor aguardando resposta, perguntar imediatamente
+	        if (gameState.awaiting_truco_response && gameState.truco_requester == 1)
+	        {
+	            int opc = 0; int ch;
+	            do {
+	                printf("Servidor pediu TRUCO! Aceita (1) ou corre (2)?: ");
+	                if (scanf("%d", &opc) != 1) {
+	                    while ((ch = getchar()) != '\n' && ch != EOF) ;
+	                    opc = 0; continue;
+	                }
+	                while ((ch = getchar()) != '\n' && ch != EOF) ;
+	            } while (opc != 1 && opc != 2);
+	
+	            int cmd = (opc == 1) ? CMD_TRUCO_ACCEPT : CMD_TRUCO_RUN;
+	            send(sock, (char *)&cmd, sizeof(int), 0);
+	            // Após enviar resposta, aguardar estado atualizado do servidor pelo thread receptor
+	            Sleep(100);
+	        }
+	        
+	        // Se for Mão de Onze para o Cliente, o servidor envia o estado e espera a decisão
+	        if (strstr(gameState.message, "MÃO DE ONZE para o Cliente!") && !gameState.awaiting_truco_response) {
+	            int opc = 0; int ch;
+	            do {
+	                printf("Você está na MÃO DE ONZE. Deseja jogar (1) ou correr (2)? Correr dá 1 ponto ao Servidor.\n");
+	                if (scanf("%d", &opc) != 1) {
+	                    while ((ch = getchar()) != '\n' && ch != EOF) ;
+	                    opc = 0; continue;
+	                }
+	                while ((ch = getchar()) != '\n' && ch != EOF) ;
+	            } while (opc != 1 && opc != 2);
+	            
+	            int cmd = (opc == 1) ? CMD_TRUCO_ACCEPT : CMD_TRUCO_RUN; // Usamos ACCEPT para jogar, RUN para correr
+	            send(sock, (char *)&cmd, sizeof(int), 0);
+	            Sleep(100);
+	        }
 
-            int cmd = (opc == 1) ? CMD_TRUCO_ACCEPT : CMD_TRUCO_RUN;
-            send(sock, (char *)&cmd, sizeof(int), 0);
-            // Após enviar resposta, aguardar estado atualizado do servidor pelo thread receptor
-            Sleep(100);
-        }
-
-        if (gameState.turn == 2)
-        {
-            int indice_escolhido = -1;
-            int ch;
-            do
-            {
-                if (scanf("%d", &indice_escolhido) != 1)
-                {
+	        if (gameState.turn == 2 && !gameState.awaiting_truco_response)
+	        {
+	            int indice_escolhido = -1;
+	            int ch;
+	            do
+	            {
+	                if (scanf("%d", &indice_escolhido) != 1)
+	                {
                     while ((ch = getchar()) != '\n' && ch != EOF)
                         ;
                     indice_escolhido = -1;
@@ -309,18 +345,18 @@ int main()
                 }
                 while ((ch = getchar()) != '\n' && ch != EOF)
                     ;
-                if (indice_escolhido == 9) {
-                    // Pedir TRUCO
-                    if (gameState.hand_value >= 12 || gameState.raise_rights != 2 || gameState.awaiting_truco_response) {
-                        printf("Já está valendo 12. Não é possível aumentar.\n");
-                        continue;
-                    }
-                    int cmd = CMD_TRUCO_REQ;
-                    send(sock, (char *)&cmd, sizeof(int), 0);
-                    // Não altera o turno; aguarda resposta do servidor
-                    indice_escolhido = -1; // para sair do loop
-                    break;
-                }
+	                if (indice_escolhido == 9) {
+	                    // Pedir TRUCO
+	                    if (gameState.hand_value != 1 || gameState.truco_allowed != 1 || gameState.awaiting_truco_response) {
+	                        printf("Não é possível pedir Truco agora.\n");
+	                        continue;
+	                    }
+	                    int cmd = CMD_TRUCO_REQ;
+	                    send(sock, (char *)&cmd, sizeof(int), 0);
+	                    // Não altera o turno; aguarda resposta do servidor
+	                    indice_escolhido = -1; // para sair do loop
+	                    break;
+	                }
                 indice_escolhido--;
                 if (indice_escolhido < 0 || indice_escolhido >= 3 || gameState.client_hand[indice_escolhido] == -1) {
                     if (gameState.hand_value < 12) printf("Carta indisponível. (1-3 carta, 9=TRUCO): "); else printf("Carta indisponível. (1-3 carta): ");

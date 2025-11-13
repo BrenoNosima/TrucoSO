@@ -1,3 +1,11 @@
 {
-  "C_Cpp.errorSquiggles": "enabled"
+  "C_Cpp.errorSquiggles": "enabled",
+  "files.associations": {
+    ".env.*": "dotenv",
+    ".prettierrc": "json",
+    "*.css": "css",
+    ".dev.vars": "dotenv",
+    "winsock2.h": "c",
+    "windows.h": "c"
+  }
 }
