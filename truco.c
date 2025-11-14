@@ -1,9 +1,3 @@
-﻿/* =======================================================
- * servidor_final_completo_v2.c - Truco Mineiro (Servidor)
- * CUMPRE TODOS OS REQUISITOS + Melhorias de Interface
- * Compilar:
- * gcc servidor_final_completo_v2.c -o truco.exe -lws2_32
- * ======================================================= */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
