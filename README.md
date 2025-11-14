@@ -1,82 +1,62 @@
-﻿# Truco Mineiro em C (Cliente/Servidor) ðŸƒ
+# Truco Skadoosh (1x1) - Cliente/Servidor
 
-Este projeto implementa o jogo Truco Mineiro em linguagem C, utilizando uma arquitetura cliente/servidor para permitir partidas entre dois jogadores via rede.
+Este projeto implementa o jogo de Truco na modalidade 1 contra 1, utilizando arquitetura Cliente/Servidor com comunicação via Sockets (Winsock2) e Memória Compartilhada para o placar.
 
-A soluÃ§Ã£o emprega um **modelo de comunicaÃ§Ã£o hÃ­brido**, utilizando duas tÃ©cnicas distintas de comunicaÃ§Ã£o entre processos para diferentes finalidades:
-1.  **Sockets TCP (`Winsock2`):** Para a comunicaÃ§Ã£o **ativa e de turnos**, como o envio de jogadas, a distribuiÃ§Ã£o de cartas e a sincronizaÃ§Ã£o de aÃ§Ãµes que exigem uma resposta imediata.
-2.  **MemÃ³ria Compartilhada (`Windows API`):** Para o gerenciamento do **estado global e passivo** do jogo, como o placar e a condiÃ§Ã£o de fim de partida, permitindo que ambos os processos leiam o estado geral de forma eficiente.
+## 🃏 Regras do Jogo
 
-O servidor gerencia toda a lÃ³gica do jogo, sendo a Ãºnica fonte da verdade para as regras e pontuaÃ§Ã£o.
+O jogo segue as regras básicas do Truco Mineiro, com as seguintes especificações de pontuação:
 
-## âœ¨ Funcionalidades
+*   **Pontuação Normal:** Cada mão (rodada de 3 vazas) vale **1 ponto**.
+*   **Truco:** O único aumento de aposta disponível é o **Truco**, que aumenta o valor da mão para **3 pontos**.
+*   **Regra de Aposta Única:** O Truco só pode ser pedido **uma vez por mão**. Se for aceito, a mão passa a valer 3 pontos e não pode haver mais aumentos até a próxima mão.
+*   **Correr:** Se um jogador pede Truco e o adversário "corre", o jogador que pediu Truco ganha **1 ponto** (o valor anterior da mão).
+*   **Mão de Onze:** O jogador que atinge 11 pontos decide se joga a mão (valendo 1 ponto) ou corre (dando 1 ponto ao adversário e perdendo o jogo). O Truco é desabilitado.
+*   **Mão de Ferro:** Se ambos os jogadores atingem 11 pontos, a mão vale **12 pontos** e é jogada "às escuras" (sem Truco). O vencedor da mão vence o jogo.
 
--   **Arquitetura Cliente/Servidor:** Jogo totalmente funcional em um ambiente local.
--   **Modelo de ComunicaÃ§Ã£o HÃ­brido:** Uso combinado de Sockets para aÃ§Ãµes de turno e MemÃ³ria Compartilhada para o placar global.
--   **LÃ³gica do Truco Mineiro:** ImplementaÃ§Ã£o do ranking de cartas, incluindo as manilhas (Zap, Copeta, Espadilha e Pica-fumo).
--   **Sistema de Jogo Completo:** Controle de mÃ£os, rodadas (vazas), contagem de pontos e determinaÃ§Ã£o do vencedor da partida.
--   **Interface de Linha de Comando (CLI):** InteraÃ§Ã£o simples e direta atravÃ©s do terminal.
--   **Multi-threading no Cliente:** A recepÃ§Ã£o de dados do servidor ocorre em uma thread separada para nÃ£o bloquear a interface do usuÃ¡rio.
+## 💻 Como Compilar e Executar
 
-## ðŸ› ï¸ Tecnologias Utilizadas
+O projeto é escrito em C e utiliza a biblioteca Winsock2, sendo ideal para compilação em ambientes Windows (como MinGW).
 
--   **Linguagem:** C
--   **ComunicaÃ§Ã£o Ativa:** Sockets TCP (Biblioteca `Winsock2`)
--   **ComunicaÃ§Ã£o Passiva:** MemÃ³ria Compartilhada (API do Windows - `windows.h`)
--   **Compilador:** MinGW-w64 (GCC para Windows)
--   **Threading:** `pthreads` (utilizada no cliente)
+### 1. Compilação
 
-## âš™ï¸ PrÃ©-requisitos
-
-Para compilar e executar este projeto, Ã© necessÃ¡rio ter o seguinte ambiente configurado:
-
--   Windows 10 ou superior.
--   **MSYS2 com o toolchain MinGW-w64:** Essencial para ter acesso ao compilador `gcc` e Ã s bibliotecas necessÃ¡rias no Windows. VocÃª pode baixÃ¡-lo [aqui](https://www.msys2.org/).
-
-## ðŸš€ Como Compilar e Executar
-
-Siga os passos abaixo para iniciar uma partida. Ã‰ necessÃ¡rio ter **dois terminais** MinGW-w64 abertos. O servidor **deve ser iniciado primeiro** para criar a memÃ³ria compartilhada.
-
-### 1. Clone o RepositÃ³rio
+Utilize os seguintes comandos no seu terminal (ex: PowerShell ou Prompt de Comando com MinGW configurado):
 
 ```bash
-git clone [https://github.com/BrenoNosima/TrucoSO.git](https://github.com/BrenoNosima/TrucoSO.git)
-cd TrucoSO
-````
+# Compilar o Servidor
+gcc truco.c -o truco.exe -lws2_32
 
-### 2\. Terminal 1 - Iniciar o Servidor
-
-Neste terminal, vocÃª irÃ¡ compilar e executar o servidor.
-
-```bash
-# Compilar o servidor
-gcc servidor.c -o truco.exe -lws2_32
-
-# Executar o servidor
-./truco.exe
+# Compilar o Cliente
+gcc client.c -o cliente.exe -lws2_32 
 ```
 
-### 3\. Terminal 2 - Iniciar o Cliente
+### 2. Execução
 
-Neste segundo terminal, vocÃª irÃ¡ compilar e executar o cliente.
+1.  **Iniciar o Servidor:**
+    Abra um terminal e execute o servidor.
+    ```bash
+    ./truco.exe
+    ```
+    O servidor aguardará a conexão do cliente.
 
-```bash
-# Compilar o cliente (Ã© necessÃ¡rio linkar a biblioteca pthread)
-gcc cliente.c -o cliente.exe -lws2_32 -lpthread
+2.  **Iniciar o Cliente:**
+    Abra um segundo terminal e execute o cliente.
+    ```bash
+    ./cliente.exe
+    ```
+    O cliente solicitará o IP do servidor (geralmente `127.0.0.1` se estiver na mesma máquina).
 
-# Executar o cliente
-./cliente.exe
-```
+## 🎮 Comandos de Jogo
 
-ApÃ³s executar, o cliente solicitarÃ¡ o endereÃ§o IP do servidor. Digite `127.0.0.1` e pressione Enter. O jogo comeÃ§arÃ¡\!
+Durante o seu turno, você terá as seguintes opções:
 
-## ðŸ“‚ Estrutura do Projeto
+| Comando | Ação | Descrição |
+| :---: | :--- | :--- |
+| **1** | Jogar Carta 1 | Joga a primeira carta da sua mão. |
+| **2** | Jogar Carta 2 | Joga a segunda carta da sua mão. |
+| **3** | Jogar Carta 3 | Joga a terceira carta da sua mão. |
+| **9** | Pedir Truco | Aumenta o valor da mão para 3 pontos (disponível apenas se a mão vale 1 ponto e o Truco ainda não foi pedido). |
+| **1** | Aceitar Truco | (Quando o adversário pede Truco) Aceita o Truco, e a mão passa a valer 3 pontos. |
+| **2** | Correr | (Quando o adversário pede Truco) Desiste da mão, e o adversário ganha 1 ponto. |
 
-  - `servidor.c`: ContÃ©m a lÃ³gica principal do jogo e atua como o anfitriÃ£o. **Cria e escreve** na memÃ³ria compartilhada e gerencia a comunicaÃ§Ã£o ativa via sockets.
-  - `cliente.c`: Conecta-se ao servidor para a troca de mensagens de turno e **lÃª** a memÃ³ria compartilhada para exibir o placar atualizado.
-
-## ðŸ‘¥ Autores
-
-Este projeto foi desenvolvido por:
-
-  - **Felipe Galeti GÃ´ngora** - [FGaleti](https://www.google.com/search?q=https://github.com/FGaleti)
-  - **Breno Nosima** - [BrenoNosima](https://www.google.com/search?q=https://github.com/BrenoNosima)
+**Observação:** O jogador que pede Truco (comando **9**) e tem o Truco aceito, deve ser o próximo a jogar a carta. O prompt de jogada aparecerá imediatamente após a aceitação.
+`)
