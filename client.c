@@ -259,7 +259,7 @@ int main()
     WSADATA wsa;
     struct sockaddr_in servidor;
     char ip_servidor[TAM_IP];
-    printf("=== Cliente Truco Mineiro ===\nDigite o IP do servidor (ex: 127.0.0.1): ");
+    printf("=== Cliente Truco Skadoosh ===\nDigite o IP do servidor (ex: 127.0.0.1): ");
     scanf("%s", ip_servidor);
 
     WSAStartup(MAKEWORD(2, 2), &wsa);
