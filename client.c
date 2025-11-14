@@ -1,10 +1,3 @@
-﻿/* =======================================================
- * cliente.c - Cliente do Truco Mineiro (Versão Final)
- * CUMPRE TODOS OS REQUISITOS: Sockets, Memória Compartilhada e
- * Interface de Jogo Completa.
- * Compilar:
- * gcc cliente.c -o cliente.exe -lws2_32 -lpthread
- * ======================================================= */
 #include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
