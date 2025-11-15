@@ -1,4 +1,4 @@
-#include <winsock2.h>
+﻿#include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -344,8 +344,17 @@ int main()
 	                        printf("Não é possível pedir Truco agora.\n");
 	                        continue;
 	                    }
+	                    
+	                    // BUG FIX: Adiciona um pequeno delay para garantir que o último estado do servidor
+	                    // (que pode ter limpado a mensagem) tenha sido processado pelo thread receptor.
+	                    Sleep(50); 
+	                    
 	                    int cmd = CMD_TRUCO_REQ;
 	                    send(sock, (char *)&cmd, sizeof(int), 0);
+	                    
+	                    // Limpa a mensagem localmente para evitar que o display_game exiba a mensagem antiga
+	                    gameState.message[0] = '\0';
+	                    
 	                    // Não altera o turno; aguarda resposta do servidor
 	                    indice_escolhido = -1; // para sair do loop
 	                    break;

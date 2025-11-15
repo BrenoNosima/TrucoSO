@@ -1,4 +1,4 @@
-#include <stdio.h>
+﻿#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -275,17 +275,18 @@ int main() {
         for (int round = 0; round < 3; round++) {
 	            state.round_num = round + 1;
 	            state.server_card_on_table = -1; state.client_card_on_table = -1;
-	            state.message[0] = '\0';
+	            state.message[0] = '\0'; // Garante que a mensagem de rodada anterior seja limpa
 	            state.awaiting_truco_response = 0; state.truco_pending = 0; state.truco_requester = 0;
 	            int first_player = (round == 0) ? mano : (last_vaza_winner != 0 ? last_vaza_winner : mano);
 	            int second_player = (first_player == 1) ? 2 : 1;
 	            int server_card = -1, client_card = -1;
 	            // O direito de pedir truco é controlado por state.truco_allowed e não muda durante as rodadas.
 
-            // --- JOGADA DO PRIMEIRO JOGADOR ---
-            state.turn = first_player;
-            display_server_view(&state, shm_placar, server_hand); // ALTERADO: Mostra a visão do jogo
-            send_state(client_socket, &state);
+	            // --- JOGADA DO PRIMEIRO JOGADOR ---
+	            state.turn = first_player;
+	            state.message[0] = '\0'; // Garante que a mensagem seja limpa antes de enviar o estado
+	            display_server_view(&state, shm_placar, server_hand); // ALTERADO: Mostra a visão do jogo
+	            send_state(client_socket, &state);
 
 	            if (state.turn == 1) {
 	                int choice_idx;
